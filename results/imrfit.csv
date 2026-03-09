@@ -1,0 +1,4 @@
+epoch,strategy,elapsed_s,throughput_img_s,total_rmw,total_writes,rmw_ratio,delta_rmw,displacement_before,displacement_after,blocks_scored,top_blocks,bottom_blocks,migrations_issued,promote_to_top,demote_to_bottom
+1,imrfit,0.0001,0.0,4010,16048,0.2499,1979,0.0,0.0,0,0,0,0,0,0
+2,imrfit,0.0001,0.0,6009,24078,0.2496,1999,0.0,0.0,0,0,0,0,0,0
+3,imrfit,0.0001,0.0,7993,32004,0.2498,1984,0.0,0.0,0,0,0,0,0,0
