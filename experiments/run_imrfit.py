@@ -57,6 +57,9 @@ def run_imrfit(
     recency_lambda: float = 1.0,
     # Scheduler
     budget: int = 10,
+    # Device
+    imrsim_util: str = "~/IMRSim/imrsim_util/imrsim_util",
+    device: str = "/dev/mapper/imrsim",
     verbose: bool = True,
 ) -> List[dict]:
     """
@@ -88,7 +91,11 @@ def run_imrfit(
     )
     scorer = Scorer(scorer_cfg)
     scheduler = MigrationScheduler(budget=budget, theta=theta)
-    monitor = IMRSimMonitor(dry_run=dry_run)
+    monitor = IMRSimMonitor(
+        device=device,
+        imrsim_util=os.path.expanduser(imrsim_util),
+        dry_run=dry_run,
+    )
 
     # Current placement map: block_id -> BlockPlacement
     current_placements: Dict[int, BlockPlacement] = {}
@@ -99,10 +106,14 @@ def run_imrfit(
         print(f"         Scorer: w_freq={w_freq}, w_seq={w_seq}, "
               f"w_size={w_size}, w_rec={w_rec}, theta={theta}")
         print(f"         Migration budget: {budget} blocks/epoch")
-
-    monitor.poll()  # baseline snapshot
+        if not dry_run:
+            print(f"         imrsim_util: {os.path.expanduser(imrsim_util)}")
+            print(f"         device:      {device}")
 
     for epoch in range(1, epochs + 1):
+        # Reset IMRSim counters before each epoch so per-epoch delta is clean
+        monitor.reset_stats()
+
         epoch_start = time.monotonic()
 
         # --- Step 1: Profile this epoch ---
@@ -135,7 +146,7 @@ def run_imrfit(
         # --- Step 5: Displacement after migration ---
         d_after = Scorer.displacement(score_results, current_placements)
 
-        # --- Step 6: Device stats ---
+        # --- Step 6: Device stats (poll after epoch; counters reset before it) ---
         stats = monitor.poll()
         delta = monitor.delta()
 
@@ -150,10 +161,10 @@ def run_imrfit(
             "strategy": "imrfit",
             "elapsed_s": round(epoch_elapsed, 4),
             "throughput_img_s": round(throughput_imgs_sec, 2),
-            "total_rmw": stats.total_rmw,
-            "total_writes": stats.total_writes,
+            # With reset_stats() before each epoch, stats.total_* == per-epoch counts
+            "epoch_rmw": stats.total_rmw,
+            "epoch_writes": stats.total_writes,
             "rmw_ratio": round(stats.overall_rmw_ratio, 4),
-            "delta_rmw": delta.total_rmw if delta else 0,
             "displacement_before": round(d_before, 4),
             "displacement_after": round(d_after, 4),
             "blocks_scored": summary.get("total_blocks", 0),
@@ -170,6 +181,7 @@ def run_imrfit(
                 f"  epoch {epoch:3d}/{epochs} | "
                 f"{throughput_imgs_sec:7.1f} img/s | "
                 f"RMW: {record['rmw_ratio']:.3f} | "
+                f"epoch_rmw: {record['epoch_rmw']} | "
                 f"D: {d_before:.3f}->{d_after:.3f} | "
                 f"mig: {len(plan.operations)}"
             )
@@ -209,6 +221,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--theta", type=float, default=0.55)
     p.add_argument("--lambda", type=float, default=1.0, dest="recency_lambda")
     p.add_argument("--budget", type=int, default=10)
+    p.add_argument("--imrsim-util", default="~/IMRSim/imrsim_util/imrsim_util",
+                   help="Path to imrsim_util binary")
+    p.add_argument("--device", default="/dev/mapper/imrsim",
+                   help="IMRSim device-mapper path")
     p.add_argument("--quiet", action="store_true")
     return p.parse_args()
 
@@ -229,5 +245,7 @@ if __name__ == "__main__":
         theta=args.theta,
         recency_lambda=args.recency_lambda,
         budget=args.budget,
+        imrsim_util=args.imrsim_util,
+        device=args.device,
         verbose=not args.quiet,
     )

@@ -199,25 +199,41 @@ class DataLoaderProfiler:
 
     def _path_to_block_id(self, filepath: str) -> Optional[int]:
         """
-        Map a file path to a virtual block ID.
+        Map a file path to a virtual 128 MB block ID.
 
-        Strategy: use the file's byte offset within the mount point directory
-        tree.  We enumerate files in sorted order to assign stable offsets.
-        For simplicity, we hash the path to a block bucket — which is
-        sufficient for simulation purposes.
+        Two strategies are tried in order:
+
+        1. **Real file-offset method** (used when the file lives under
+           self.mount_point):
+           Approximates the file's byte position on the block device using
+           ``st_blocks * 512`` (the number of 512-byte sectors allocated to
+           the file as reported by the kernel).  This is a reasonable proxy
+           for the file's physical offset on the IMRSim device and produces
+           stable, device-meaningful block IDs.
+
+        2. **Inode-hash fallback** (used for files outside the mount point,
+           e.g. in /tmp during unit tests):
+           NOTE — this is an approximation only.  The inode number is hashed
+           into a virtual block bucket and does NOT reflect the file's real
+           on-disk position.  It is used solely so the profiler can run in
+           dry-run / test environments where /mnt/imrsim is unavailable.
         """
         try:
             real_path = os.path.realpath(filepath)
-            # Only profile files under the mount point
-            if not real_path.startswith(self.mount_point):
-                real_path = filepath  # fall back: use path as-is
-
-            # Derive block ID from cumulative file offset estimate
-            # Use inode number as a stable per-file identifier
             stat = os.stat(real_path)
-            # Approximate offset: (inode % large_prime) gives spread
-            approx_offset = (stat.st_ino * 4096) % (64 * self.block_size)
-            return approx_offset // self.block_size
+
+            if real_path.startswith(self.mount_point):
+                # Strategy 1: derive offset from allocated 512-byte sectors.
+                # st_blocks counts 512-byte units actually allocated on disk.
+                byte_offset = stat.st_blocks * 512
+                # Clamp to a reasonable address space (64 × block_size)
+                byte_offset = byte_offset % (64 * self.block_size)
+                return byte_offset // self.block_size
+            else:
+                # Strategy 2: inode-hash approximation (dry-run / test only).
+                # WARNING: does NOT reflect real physical disk placement.
+                approx_offset = (stat.st_ino * 4096) % (64 * self.block_size)
+                return approx_offset // self.block_size
         except OSError:
             return None
 

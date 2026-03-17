@@ -38,6 +38,8 @@ def run_baseline(
     dry_run: bool = False,
     n_classes: int = 10,
     m_images: int = 100,
+    imrsim_util: str = "~/IMRSim/imrsim_util/imrsim_util",
+    device: str = "/dev/mapper/imrsim",
     verbose: bool = True,
 ) -> List[dict]:
     """
@@ -63,16 +65,24 @@ def run_baseline(
         batch_size=batch_size,
         use_mock=use_mock,
     )
-    monitor = IMRSimMonitor(dry_run=dry_run)
+    monitor = IMRSimMonitor(
+        device=device,
+        imrsim_util=os.path.expanduser(imrsim_util),
+        dry_run=dry_run,
+    )
 
     records: List[dict] = []
     if verbose:
         print(f"[baseline] Starting {epochs} epochs, batch_size={batch_size}")
         print(f"           Placement strategy: ALL BOTTOM (naive IMR)")
-
-    monitor.poll()  # baseline snapshot
+        if not dry_run:
+            print(f"           imrsim_util: {os.path.expanduser(imrsim_util)}")
+            print(f"           device:      {device}")
 
     for epoch in range(1, epochs + 1):
+        # Reset IMRSim counters before each epoch so per-epoch delta is clean
+        monitor.reset_stats()
+
         epoch_start = time.monotonic()
         batches_processed = 0
 
@@ -83,6 +93,7 @@ def run_baseline(
                 time.sleep(0.001)
 
         epoch_elapsed = time.monotonic() - epoch_start
+        # Poll after epoch to capture RMW counts accumulated during this epoch
         stats = monitor.poll()
         delta = monitor.delta()
 
@@ -96,10 +107,10 @@ def run_baseline(
             "strategy": "baseline",
             "elapsed_s": round(epoch_elapsed, 4),
             "throughput_img_s": round(throughput_imgs_sec, 2),
-            "total_rmw": stats.total_rmw,
-            "total_writes": stats.total_writes,
+            # With reset_stats() before each epoch, stats.total_* == per-epoch counts
+            "epoch_rmw": stats.total_rmw,
+            "epoch_writes": stats.total_writes,
             "rmw_ratio": round(stats.overall_rmw_ratio, 4),
-            "delta_rmw": delta.total_rmw if delta else 0,
             "displacement": 1.0,  # Baseline: all blocks misplaced (all on BOTTOM)
         }
         records.append(record)
@@ -109,7 +120,7 @@ def run_baseline(
                 f"  epoch {epoch:3d}/{epochs} | "
                 f"{throughput_imgs_sec:7.1f} img/s | "
                 f"RMW ratio: {record['rmw_ratio']:.3f} | "
-                f"delta_rmw: {record['delta_rmw']}"
+                f"epoch_rmw: {record['epoch_rmw']}"
             )
 
     # --- Write CSV ---
@@ -137,6 +148,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--data-root", default="/mnt/imrsim/imagenet")
     p.add_argument("--classes", type=int, default=10)
     p.add_argument("--images-per-class", type=int, default=100)
+    p.add_argument("--imrsim-util", default="~/IMRSim/imrsim_util/imrsim_util",
+                   help="Path to imrsim_util binary")
+    p.add_argument("--device", default="/dev/mapper/imrsim",
+                   help="IMRSim device-mapper path")
     p.add_argument("--dry-run", action="store_true",
                    help="Use mock dataloader; no real device required")
     p.add_argument("--quiet", action="store_true")
@@ -152,5 +167,7 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         n_classes=args.classes,
         m_images=args.images_per_class,
+        imrsim_util=args.imrsim_util,
+        device=args.device,
         verbose=not args.quiet,
     )

@@ -1,4 +1,4 @@
-epoch,strategy,elapsed_s,throughput_img_s,total_rmw,total_writes,rmw_ratio,delta_rmw,displacement
-1,baseline,0.0,0.0,3983,15975,0.2493,1999,1.0
-2,baseline,0.0,0.0,6000,24006,0.2499,2017,1.0
-3,baseline,0.0,0.0,8014,32061,0.25,2014,1.0
+epoch,strategy,elapsed_s,throughput_img_s,epoch_rmw,epoch_writes,rmw_ratio,displacement
+1,baseline,0.0,0.0,2000,8044,0.2486,1.0
+2,baseline,0.0,0.0,3997,16020,0.2495,1.0
+3,baseline,0.0,0.0,6003,23990,0.2502,1.0
