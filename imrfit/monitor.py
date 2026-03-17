@@ -4,12 +4,21 @@ monitor.py - IMRSim RMW statistics monitor.
 Shells out to `imrsim_util` (the IMRSim user-space tool) to read per-zone
 Read-Modify-Write (RMW) counts from a live /dev/mapper/imrsim device.
 
+Real imrsim_util commands:
+    imrsim_util <device> s 1   # get all zone stats
+    imrsim_util <device> s 4   # reset all zone stats
+
+Real imrsim_util output format (one line per zone):
+    zone[0]: condition=0x1 type=0x1 ... read_count=100 write_count=50 rmw_count=10
+    zone[1]: condition=0x1 type=0x2 ... read_count=200 write_count=80 rmw_count=25
+
 When dry_run=True (or the device is unavailable), returns synthetic
 statistics so the rest of the pipeline can run without a real device.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -57,11 +66,12 @@ class IMRSimMonitor:
     Args:
         device: path to the device-mapper target, e.g. /dev/mapper/imrsim
         imrsim_util: path to the imrsim_util binary
+                     (default: ~/IMRSim/imrsim_util/imrsim_util)
         dry_run: if True, return synthetic data without calling the real tool
         synthetic_zones: number of zones to simulate in dry-run mode
     """
 
-    IMRSIM_UTIL_DEFAULT = "imrsim_util"
+    IMRSIM_UTIL_DEFAULT = os.path.expanduser("~/IMRSim/imrsim_util/imrsim_util")
 
     def __init__(
         self,
@@ -83,7 +93,7 @@ class IMRSimMonitor:
 
     def poll(self) -> DeviceStats:
         """
-        Read current RMW statistics from IMRSim.
+        Read current RMW statistics from IMRSim (command: s 1).
 
         Returns a DeviceStats snapshot.  In dry_run mode, returns synthetic
         stats that grow monotonically to simulate a running workload.
@@ -96,6 +106,33 @@ class IMRSimMonitor:
         self._history.append(stats)
         self._epoch_counter += 1
         return stats
+
+    def reset_stats(self) -> None:
+        """
+        Reset all IMRSim zone counters on the device (command: s 4).
+
+        In dry_run mode this is a no-op (synthetic counters are already
+        per-epoch and don't need explicit resetting).
+        """
+        if self.dry_run:
+            return
+        try:
+            result = subprocess.run(
+                [self.imrsim_util, self.device, "s", "4"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"imrsim_util reset failed (exit {result.returncode}): "
+                    f"{result.stderr.strip()}"
+                )
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"imrsim_util not found at '{self.imrsim_util}'. "
+                "Install IMRSim or use dry_run=True."
+            )
 
     def delta(self) -> Optional[DeviceStats]:
         """
@@ -138,16 +175,14 @@ class IMRSimMonitor:
 
     def _real_stats(self) -> DeviceStats:
         """
-        Call `imrsim_util <device> get_stats` and parse its output.
+        Call `imrsim_util <device> s 1` and parse its output.
 
-        Expected output format (one line per zone):
-            zone <id>: rmw=<n> reads=<n> writes=<n>
-
-        Adjust the regex below if the actual imrsim_util output differs.
+        Real output format (one line per zone):
+            zone[0]: condition=0x1 type=0x1 ... read_count=100 write_count=50 rmw_count=10
         """
         try:
             result = subprocess.run(
-                [self.imrsim_util, self.device, "get_stats"],
+                [self.imrsim_util, self.device, "s", "1"],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -165,24 +200,40 @@ class IMRSimMonitor:
 
     @staticmethod
     def _parse_output(raw: str) -> DeviceStats:
-        """Parse imrsim_util output into a DeviceStats object."""
+        """
+        Parse imrsim_util `s 1` output into a DeviceStats object.
+
+        Matches lines of the form:
+            zone[<id>]: ... read_count=<n> write_count=<n> rmw_count=<n>
+        Fields may appear in any order; unrecognised fields are ignored.
+        """
         stats = DeviceStats(polled_at=time.monotonic())
-        # Pattern: zone <id>: rmw=<n> reads=<n> writes=<n>
-        pattern = re.compile(
-            r"zone\s+(\d+):\s+rmw=(\d+)\s+reads=(\d+)\s+writes=(\d+)",
-            re.IGNORECASE,
-        )
-        for match in pattern.finditer(raw):
-            zid = int(match.group(1))
+        # Match the zone index from "zone[N]:" prefix
+        zone_line = re.compile(r"zone\[(\d+)\]:", re.IGNORECASE)
+        # Extract named counters anywhere on the same line
+        read_pat  = re.compile(r"read_count=(\d+)",  re.IGNORECASE)
+        write_pat = re.compile(r"write_count=(\d+)", re.IGNORECASE)
+        rmw_pat   = re.compile(r"rmw_count=(\d+)",   re.IGNORECASE)
+
+        for line in raw.splitlines():
+            zm = zone_line.search(line)
+            if not zm:
+                continue
+            zid = int(zm.group(1))
+
+            rm = read_pat.search(line)
+            wm = write_pat.search(line)
+            rmwm = rmw_pat.search(line)
+
             zs = ZoneStats(
                 zone_id=zid,
-                rmw_count=int(match.group(2)),
-                read_count=int(match.group(3)),
-                write_count=int(match.group(4)),
+                read_count=int(rm.group(1))   if rm   else 0,
+                write_count=int(wm.group(1))  if wm   else 0,
+                rmw_count=int(rmwm.group(1))  if rmwm else 0,
             )
             stats.zones[zid] = zs
-            stats.total_rmw += zs.rmw_count
-            stats.total_reads += zs.read_count
+            stats.total_rmw    += zs.rmw_count
+            stats.total_reads  += zs.read_count
             stats.total_writes += zs.write_count
         return stats
 
