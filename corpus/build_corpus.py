@@ -103,7 +103,7 @@ class CorpusConfig:
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     use_synthetic: bool = False              # True => skip HF download
     synthetic_seed: int = 0xC0FFEE
-    huggingface_subset: str = "20220301.en"
+    huggingface_subset: str = "20231101.en"
     image_fraction: float = IMAGE_FRACTION
     log_every_chunks: int = 1000
 
@@ -249,14 +249,65 @@ class _EmbeddingBackend:
 def _hf_wikipedia_stream(subset: str) -> Iterator[Dict[str, Any]]:
     """Yield {"title": ..., "text": ...} records from HF Wikipedia.
 
-    Uses streaming=True so RAM stays flat regardless of dataset size.
-    Raises RuntimeError on any failure — caller switches to synthetic.
+    Tries three loading strategies in order, raising RuntimeError only if
+    all three fail so the caller can fall back to the synthetic generator.
+
+    Strategy 1 — wikimedia/wikipedia (recommended, no dataset script):
+        Works with datasets >= 2.14.  Config names look like "20231101.en".
+
+    Strategy 2 — wikipedia with trust_remote_code (legacy):
+        For older cached versions of the "wikipedia" package that still ship
+        a wikipedia.py script but require explicit opt-in.
+
+    Strategy 3 — wikipedia without trust_remote_code:
+        For very old datasets versions where the script was allowed by default.
     """
     from datasets import load_dataset  # type: ignore
 
-    ds = load_dataset("wikipedia", subset, split="train", streaming=True)
-    for row in ds:
-        yield {"title": row.get("title", ""), "text": row.get("text", "")}
+    errors: list = []
+
+    # Strategy 1: new home of Wikipedia on HuggingFace (no scripts)
+    try:
+        ds = load_dataset(
+            "wikimedia/wikipedia",
+            subset,
+            split="train",
+            streaming=True,
+        )
+        for row in ds:
+            yield {"title": row.get("title", ""), "text": row.get("text", "")}
+        return
+    except Exception as exc:
+        errors.append(f"wikimedia/wikipedia: {exc}")
+
+    # Strategy 2: old "wikipedia" package, explicit trust_remote_code
+    try:
+        ds = load_dataset(
+            "wikipedia",
+            subset,
+            split="train",
+            streaming=True,
+            trust_remote_code=True,
+        )
+        for row in ds:
+            yield {"title": row.get("title", ""), "text": row.get("text", "")}
+        return
+    except Exception as exc:
+        errors.append(f"wikipedia trust_remote_code: {exc}")
+
+    # Strategy 3: old "wikipedia" package without flag (oldest datasets)
+    try:
+        ds = load_dataset("wikipedia", subset, split="train", streaming=True)
+        for row in ds:
+            yield {"title": row.get("title", ""), "text": row.get("text", "")}
+        return
+    except Exception as exc:
+        errors.append(f"wikipedia: {exc}")
+
+    raise RuntimeError(
+        "All Wikipedia loading strategies failed:\n"
+        + "\n".join(f"  {e}" for e in errors)
+    )
 
 
 def _synthetic_wikipedia_stream(seed: int) -> Iterator[Dict[str, Any]]:
@@ -582,6 +633,10 @@ def _build_arg_parser():
                    help="Shard size in megabytes (default 128, matches block_size)")
     p.add_argument("--embed-batch", type=int, default=EMBED_BATCH,
                    help=f"Embedding batch size (default {EMBED_BATCH})")
+    p.add_argument("--hf-subset", default="20231101.en",
+                   help="HuggingFace Wikipedia config (default: %(default)s)."
+                        " Loaded via wikimedia/wikipedia first, then "
+                        "wikipedia with trust_remote_code as fallback.")
     p.add_argument("--synthetic", action="store_true",
                    help="Use deterministic synthetic source (offline)")
     p.add_argument("--seed", type=int, default=0xC0FFEE,
@@ -599,6 +654,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         embed_batch=args.embed_batch,
         use_synthetic=args.synthetic,
         synthetic_seed=args.seed,
+        huggingface_subset=args.hf_subset,
     )
     builder = CorpusBuilder(cfg)
     summary = builder.build()
