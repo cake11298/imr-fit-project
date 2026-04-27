@@ -1,0 +1,10 @@
+# Scenario B — Cold Sequential Scan
+# This file is informational; Scenario B drives the engine directly via
+# read_chunks() in manifest order, so per-line queries are not used.  These
+# placeholder queries exist so a future variant can use them for a
+# query-level scan (one query per chunk).
+scan offset 0
+scan offset 1
+scan offset 2
+scan offset 3
+scan offset 4

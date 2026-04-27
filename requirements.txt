@@ -1,8 +1,34 @@
-torch>=2.0.0
-torchvision>=0.15.0
-numpy>=1.24.0
-matplotlib>=3.7.0
-pandas>=2.0.0
-Pillow>=9.5.0
-pytest>=7.3.0
-tqdm>=4.65.0
+# =============================================================================
+# IMR-Fit experiment dependencies
+#
+# Pin loosely to give pip room to resolve the CUDA wheel.  The conda env
+# `imrfit` already ships PyTorch 2.5.1+cu121 — `pip install -r` will leave it
+# alone if it's compatible.
+# =============================================================================
+
+# --- Core ----------------------------------------------------------------
+torch>=2.0.0,<3.0.0
+numpy>=1.24,<3.0
+pandas>=2.0,<3.0
+scipy>=1.11
+scikit-learn>=1.3      # weight grid search
+
+# --- RAG -----------------------------------------------------------------
+# llama-cpp-python: build with CUDA via
+#   CMAKE_ARGS="-DLLAMA_CUDA=on" pip install --no-cache-dir llama-cpp-python
+llama-cpp-python>=0.2.70 ; platform_system != "Windows"
+sentence-transformers>=2.6
+faiss-cpu>=1.7         # fallback; swap for faiss-gpu if available
+datasets>=2.18         # HuggingFace, used in streaming mode
+Pillow>=9.5
+transformers>=4.40     # fallback path (bitsandbytes Q4) for query engine
+
+# --- Visualisation -------------------------------------------------------
+matplotlib>=3.7
+seaborn>=0.13
+
+# --- Utilities -----------------------------------------------------------
+tqdm>=4.65
+loguru>=0.7
+click>=8.1
+pytest>=7.3

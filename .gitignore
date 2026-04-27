@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -7,4 +8,22 @@ dist/
 build/
 .eggs/
 *.log
+
+# Generated experiment artefacts
 results/figures/
+results/latest/
+results/run_*/
+traces/*.jsonl
+traces/*.csv
+
+# Local corpus / index (lives on /mnt/{ssd,hdd})
+corpus_local/
+faiss_index_local/
+*.bin
+*.gguf
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store

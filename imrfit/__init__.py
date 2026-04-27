@@ -1,22 +1,33 @@
-"""
-IMR-Fit: Intelligent block placement for Interlaced Magnetic Recording drives.
+"""IMR-Fit: intelligent block placement for IMR drives.
 
-This package intercepts PyTorch DataLoader I/O, computes per-block placement
-scores, and migrates data between IMR Top/Bottom tracks to minimize RMW overhead.
+The original training-loop profiler (``DataLoaderProfiler``) is preserved
+for backwards compatibility; the new RAG experiment uses
+``imrfit.analyzer.Analyzer`` which consumes pre-recorded cold-tier traces.
 """
 
 from .profiler import DataLoaderProfiler, BlockStats
-from .scorer import Scorer, BlockPlacement
-from .scheduler import MigrationScheduler, MigrationPlan
-from .monitor import IMRSimMonitor
+from .scorer import Scorer, ScorerConfig, BlockPlacement, ScoreResult
+from .scheduler import MigrationScheduler, MigrationPlan, MigrationOp
+from .monitor import IMRSimMonitor, DeviceStats, ZoneStats
+from .analyzer import (
+    Analyzer,
+    AnalyzerConfig,
+    BlockFeatureRow,
+    grid_search_weights,
+    BLOCK_SIZE_BYTES,
+    RECENCY_LAMBDA,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
-    "DataLoaderProfiler",
-    "BlockStats",
-    "Scorer",
-    "BlockPlacement",
-    "MigrationScheduler",
-    "MigrationPlan",
-    "IMRSimMonitor",
+    # legacy training-loop profiler
+    "DataLoaderProfiler", "BlockStats",
+    # core scoring / scheduling primitives (shared by old & new pipelines)
+    "Scorer", "ScorerConfig", "BlockPlacement", "ScoreResult",
+    "MigrationScheduler", "MigrationPlan", "MigrationOp",
+    "IMRSimMonitor", "DeviceStats", "ZoneStats",
+    # new trace-based analyzer (Module 4)
+    "Analyzer", "AnalyzerConfig", "BlockFeatureRow",
+    "grid_search_weights",
+    "BLOCK_SIZE_BYTES", "RECENCY_LAMBDA",
 ]

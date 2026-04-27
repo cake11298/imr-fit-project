@@ -1,0 +1,12 @@
+# Scenario C — Mixed (read templates).  Scenario C also issues 30% writes
+# generated programmatically; this file only seeds the read side.
+What is the history of {topic}?
+Summarise {topic} for me.
+List the key dates of {topic}.
+Describe how {topic} works.
+Compare {topic} with similar concepts.
+Who are the most notable people associated with {topic}?
+What are the open scientific questions in {topic}?
+Explain {topic} as if to a high-school student.
+What controversies surround {topic}?
+Provide a timeline of {topic}.
