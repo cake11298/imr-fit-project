@@ -1,0 +1,52 @@
+# Scenario A — Bursty Frequent (50 hot Wikipedia topics)
+# Queried with Zipf weights so the first ~10 dominate. Tweak as needed.
+Albert Einstein
+Quantum mechanics
+World War II
+Photosynthesis
+Renaissance
+DNA
+French Revolution
+Black hole
+Roman Empire
+Climate change
+Internet
+Mount Everest
+Jane Austen
+Solar system
+American Civil War
+Buddhism
+Carl Linnaeus
+Mona Lisa
+Pyramids of Giza
+Industrial Revolution
+Ludwig van Beethoven
+Apollo 11
+Great Wall of China
+Vincent van Gogh
+Charles Darwin
+Eiffel Tower
+Pacific Ocean
+Mahatma Gandhi
+Cleopatra
+Statue of Liberty
+Galileo Galilei
+Mount Fuji
+Tokyo
+Nile river
+Stonehenge
+Berlin Wall
+Marie Curie
+Sahara desert
+Marco Polo
+Niagara Falls
+Pythagoras
+Hubble Space Telescope
+Sigmund Freud
+Aurora borealis
+Plato
+Mount Vesuvius
+Frida Kahlo
+Bermuda Triangle
+World Wide Web
+ENIAC
