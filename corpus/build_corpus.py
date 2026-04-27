@@ -246,68 +246,67 @@ class _EmbeddingBackend:
 # ---------------------------------------------------------------------------
 
 
-def _hf_wikipedia_stream(subset: str) -> Iterator[Dict[str, Any]]:
-    """Yield {"title": ..., "text": ...} records from HF Wikipedia.
+def _load_hf_dataset_eagerly(subset: str):
+    """Load a HuggingFace Wikipedia dataset object (NOT a generator).
 
-    Tries three loading strategies in order, raising RuntimeError only if
-    all three fail so the caller can fall back to the synthetic generator.
+    This function runs synchronously so any ImportError / RuntimeError is
+    raised immediately — before a generator is created — making it safe to
+    catch inside _open_stream's try/except.
 
-    Strategy 1 — wikimedia/wikipedia (recommended, no dataset script):
-        Works with datasets >= 2.14.  Config names look like "20231101.en".
-
-    Strategy 2 — wikipedia with trust_remote_code (legacy):
-        For older cached versions of the "wikipedia" package that still ship
-        a wikipedia.py script but require explicit opt-in.
-
-    Strategy 3 — wikipedia without trust_remote_code:
-        For very old datasets versions where the script was allowed by default.
+    Returns the HF IterableDataset object on success.
+    Raises RuntimeError (wrapping the root cause) on any failure.
     """
-    from datasets import load_dataset  # type: ignore
+    # --- Step 1: check 'datasets' is installed ----------------------------
+    try:
+        from datasets import load_dataset  # type: ignore  # noqa: PLC0415
+    except ImportError as exc:
+        raise RuntimeError(
+            f"'datasets' package is not installed: {exc}\n"
+            f"Fix: pip install 'datasets>=2.18'"
+        ) from exc
 
     errors: list = []
 
-    # Strategy 1: new home of Wikipedia on HuggingFace (no scripts)
+    # Strategy 1: wikimedia/wikipedia (no dataset scripts, datasets >= 2.14)
     try:
-        ds = load_dataset(
-            "wikimedia/wikipedia",
-            subset,
-            split="train",
-            streaming=True,
+        return load_dataset(
+            "wikimedia/wikipedia", subset, split="train", streaming=True
         )
-        for row in ds:
-            yield {"title": row.get("title", ""), "text": row.get("text", "")}
-        return
     except Exception as exc:
-        errors.append(f"wikimedia/wikipedia: {exc}")
+        errors.append(f"wikimedia/wikipedia/{subset}: {exc}")
 
-    # Strategy 2: old "wikipedia" package, explicit trust_remote_code
+    # Strategy 2: old 'wikipedia' package with explicit trust_remote_code
     try:
-        ds = load_dataset(
-            "wikipedia",
-            subset,
-            split="train",
-            streaming=True,
-            trust_remote_code=True,
+        return load_dataset(
+            "wikipedia", subset, split="train",
+            streaming=True, trust_remote_code=True,
         )
-        for row in ds:
-            yield {"title": row.get("title", ""), "text": row.get("text", "")}
-        return
     except Exception as exc:
-        errors.append(f"wikipedia trust_remote_code: {exc}")
+        errors.append(f"wikipedia (trust_remote_code=True): {exc}")
 
-    # Strategy 3: old "wikipedia" package without flag (oldest datasets)
+    # Strategy 3: old 'wikipedia' without flag (very old datasets versions)
     try:
-        ds = load_dataset("wikipedia", subset, split="train", streaming=True)
-        for row in ds:
-            yield {"title": row.get("title", ""), "text": row.get("text", "")}
-        return
+        return load_dataset("wikipedia", subset, split="train", streaming=True)
     except Exception as exc:
         errors.append(f"wikipedia: {exc}")
 
     raise RuntimeError(
         "All Wikipedia loading strategies failed:\n"
-        + "\n".join(f"  {e}" for e in errors)
+        + "\n".join(f"  • {e}" for e in errors)
     )
+
+
+def _hf_wikipedia_stream(subset: str) -> Iterator[Dict[str, Any]]:
+    """Thin generator wrapper around _load_hf_dataset_eagerly.
+
+    NOTE: this function must NOT be called directly from _open_stream —
+    always go via _load_hf_dataset_eagerly so the ImportError is raised
+    eagerly (not lazily inside the generator body where try/except can't
+    catch it).
+    """
+    ds = _load_hf_dataset_eagerly(subset)   # raises on failure
+    for row in ds:
+        yield {"title": row.get("title", ""), "text": row.get("text", "")}
 
 
 def _synthetic_wikipedia_stream(seed: int) -> Iterator[Dict[str, Any]]:
@@ -457,12 +456,22 @@ class CorpusBuilder:
     def _open_stream(self) -> Iterator[Dict[str, Any]]:
         if self.cfg.use_synthetic:
             return _synthetic_wikipedia_stream(self.cfg.synthetic_seed)
+        # _load_hf_dataset_eagerly runs synchronously so any ImportError /
+        # RuntimeError is raised *here* (not lazily inside a generator body).
         try:
-            return _hf_wikipedia_stream(self.cfg.huggingface_subset)
-        except Exception as exc:  # pragma: no cover
+            ds = _load_hf_dataset_eagerly(self.cfg.huggingface_subset)
+
+            def _wrap():
+                for row in ds:
+                    yield {"title": row.get("title", ""),
+                           "text": row.get("text", "")}
+
+            return _wrap()
+        except Exception as exc:
             print(
-                f"[corpus] HF dataset unavailable ({exc}); "
-                "switching to synthetic fallback.",
+                f"[corpus] HF dataset unavailable — {exc}\n"
+                f"[corpus] Switching to synthetic fallback "
+                f"(add --synthetic to silence this warning).",
                 file=sys.stderr,
             )
             return _synthetic_wikipedia_stream(self.cfg.synthetic_seed)
