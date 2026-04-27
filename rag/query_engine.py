@@ -117,18 +117,24 @@ class _QueryEmbedder:
             )
             self._fallback = True
 
-    def encode(self, query: str, dim: int = 384) -> "np.ndarray":
-        assert np is not None
+    def encode(self, query: str, dim: int = 384):
+        """Return a unit-norm embedding vector (numpy array if available,
+        plain list otherwise).  Never raises — always returns something."""
         if not self._fallback and self._model is not None:
+            # sentence-transformers path (returns numpy array)
             v = self._model.encode([query], convert_to_numpy=True,
                                    normalize_embeddings=True)
             return v.astype("float32")[0]
 
+        # Hash-based deterministic fallback — works with or without numpy.
         rng = random.Random(abs(hash(query)))
-        v = np.array([rng.uniform(-1.0, 1.0) for _ in range(dim)],
-                     dtype="float32")
-        v /= (np.linalg.norm(v) + 1e-9)
-        return v
+        floats = [rng.uniform(-1.0, 1.0) for _ in range(dim)]
+        norm = sum(x * x for x in floats) ** 0.5 + 1e-9
+        floats = [x / norm for x in floats]
+
+        if np is not None:
+            return np.array(floats, dtype="float32")
+        return floats   # plain list — FAISS won't work but trace still records
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +158,17 @@ class _Retriever:
         idx_path = self.ssd_root / "index.faiss"
 
         if not ids_path.exists():
-            print(f"[rag] missing ids.npy at {ids_path}", file=sys.stderr)
+            print(
+                f"[rag] FAISS index not found at {ids_path}.\n"
+                f"[rag] Run corpus build first: "
+                f"python -m corpus.build_corpus --target-gb <N>",
+                file=sys.stderr,
+            )
             return
 
-        assert np is not None
+        if np is None:
+            print("[rag] numpy not installed — retriever disabled", file=sys.stderr)
+            return
         self._ids = np.load(ids_path, allow_pickle=True)
 
         if idx_path.exists():
@@ -170,11 +183,13 @@ class _Retriever:
         if emb_path.exists():
             self._brute_embeddings = np.load(emb_path)
 
-    def search(self, q_vec: "np.ndarray", top_k: int) -> List[Tuple[str, float]]:
-        if self._ids is None:
+    def search(self, q_vec, top_k: int) -> List[Tuple[str, float]]:
+        if self._ids is None or np is None:
             return []
 
-        assert np is not None
+        if not hasattr(q_vec, "reshape"):
+            q_vec = np.array(q_vec, dtype="float32")
+
         if self._faiss_index is not None:
             D, I = self._faiss_index.search(q_vec.reshape(1, -1), top_k)
             scores = D[0].tolist()
@@ -303,6 +318,14 @@ class RAGQueryEngine:
         self._embedder = _QueryEmbedder(self.cfg.embedding_model)
         self._retriever = _Retriever(self.cfg.ssd_index_root)
         self._llm = _LLMBackend(self.cfg)
+        self._retriever_ready = self._retriever._ids is not None
+        if not self._retriever_ready:
+            print(
+                "[rag] Retriever has no index — all queries will return 0 "
+                "chunks.\n"
+                "[rag] Build the corpus first (see docs/USAGE.md §1).",
+                file=sys.stderr,
+            )
 
     # ------------------------------------------------------------------
     def known_chunk_ids(self) -> List[str]:
@@ -319,12 +342,8 @@ class RAGQueryEngine:
         result = QueryResult(query=q)
         k = top_k or self.cfg.top_k
 
-        # 1. Embed
-        try:
-            qvec = self._embedder.encode(q)
-        except Exception as exc:  # pragma: no cover
-            print(f"[rag] embed failed: {exc}", file=sys.stderr)
-            qvec = None
+        # 1. Embed (encode() is guaranteed not to raise)
+        qvec = self._embedder.encode(q) if self._retriever_ready else None
 
         # 2. Retrieve
         contexts: List[str] = []

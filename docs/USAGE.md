@@ -6,27 +6,75 @@
 
 ## 0. 環境準備
 
-```bash
-# 一次性
-conda activate imrfit                       # PyTorch 2.5.1+cu121 已內建
-pip install -r requirements.txt             # 其餘 deps
+### 0a. 安裝 Python 套件 (必做，每台機器只需要一次)
 
-# 建立掛載點 (一次性 — 重開機也要)
+> **重要：** `pip install -r requirements.txt` 必須在 conda env 裡面跑，
+> 而且要確認裝進去了。下面逐步驗證。
+
+```bash
+conda activate imrfit            # 確認 env 正確
+
+# 安裝所有相依套件
+pip install -r requirements.txt
+
+# 專門裝幾個容易被漏掉的套件（明確指定比 requirements.txt 更可靠）
+pip install datasets>=2.18 sentence-transformers faiss-cpu numpy
+```
+
+如果你遇到網路問題，`datasets` 可以這樣安裝：
+
+```bash
+pip install "datasets>=2.18"     # 注意版本號，舊版不支援 wikimedia/wikipedia
+```
+
+### 0b. 驗證套件都裝好了
+
+**必做**！一個一個確認，哪個失敗就補裝：
+
+```bash
+python -c "
+import numpy;              print('numpy        ✓', numpy.__version__)
+import sentence_transformers; print('sentence-transformers ✓')
+import faiss;              print('faiss        ✓')
+import datasets;           print('datasets     ✓', datasets.__version__)
+import matplotlib;         print('matplotlib   ✓')
+import torch;              print('torch        ✓', torch.__version__)
+"
+```
+
+每一行都要印出 `✓`。如果哪行報 `ModuleNotFoundError`，就：
+
+```bash
+pip install <那個套件名>
+```
+
+常見問題：
+- `No module named 'datasets'` → `pip install "datasets>=2.18"`
+- `No module named 'sentence_transformers'` → `pip install sentence-transformers`
+- `No module named 'faiss'` → `pip install faiss-cpu`
+- `No module named 'numpy'` → `pip install numpy`（理論上 PyTorch 會帶進來，但有時候 conda env 沒同步）
+
+### 0c. 建立 HDD/SSD 掛載點 (一次性 — 重開機也要)
+
+```bash
 sudo mkdir -p /mnt/hdd /mnt/ssd
 sudo chown $USER:$USER /mnt/hdd /mnt/ssd
 ```
 
-如果你還沒有真的 SSD/HDD 分區，可以先用 tmpfs / loop file 模擬：
+如果你還沒有真的 SSD/HDD 分區，可以先用普通目錄模擬（學術實驗用，I/O trace 仍然有效）：
 
 ```bash
-# 把 /mnt/hdd 指到一塊空目錄 (走實體 disk 也可以)
-sudo mount --bind /home/$USER/scratch/hdd /mnt/hdd
-sudo mount --bind /home/$USER/scratch/ssd /mnt/ssd
+mkdir -p ~/scratch/hdd ~/scratch/ssd
+sudo mount --bind ~/scratch/hdd /mnt/hdd
+sudo mount --bind ~/scratch/ssd /mnt/ssd
 ```
 
 ---
 
 ## 1. 建立 corpus (Module 1)
+
+> **注意：Step 0 的套件驗證必須先通過才能繼續。**
+> corpus 建好之後才能跑 Step 2（workload），順序不能顛倒。
 
 ### 1a. 完整版 — 真的下 Wikipedia (慢，~ 60-90 分鐘)
 
@@ -37,18 +85,29 @@ python -m corpus.build_corpus \
     --target-gb 20
 ```
 
+如果沒有 `datasets` 套件，會出現：
+```
+[corpus] HF dataset unavailable — 'datasets' package is not installed
+[corpus] Switching to synthetic fallback
+```
+這表示它自動切到合成資料了，不會 crash。但要跑真實 Wikipedia 就請先裝：`pip install "datasets>=2.18"`
+
 * 文字 chunk 切 512 tokens，128 MB / shard。
 * 圖片 100 KB - 5 MB 不等 (雙峰 Z(b))。
 * `manifest.jsonl` 紀錄 (chunk_id, kind, shard, offset, size, image_path)。
 * Embedding (MiniLM-L6) 同時跑，FAISS IndexIVFFlat 寫到 SSD。
 
-### 1b. 開發 / CI — 用合成資料 (~ 2 分鐘)
+### 1b. 開發 / CI — 用合成資料 (~ 2 分鐘，不需要網路或 datasets 套件)
 
 ```bash
-python -m corpus.build_corpus --target-gb 4 --synthetic
+python -m corpus.build_corpus \
+    --hdd-root /mnt/hdd/wiki_corpus \
+    --ssd-root /mnt/ssd/faiss_index \
+    --target-gb 4 \
+    --synthetic
 ```
 
-合成資料用 deterministic Zipf vocabulary，跟真實 Wikipedia *結構上* 完全一樣 (shard 大小、雙峰 image 大小)，後續 pipeline 看不出差別。離線、無 GPU、CI 環境都能跑。
+合成資料用 deterministic Zipf vocabulary，跟真實 Wikipedia *結構上* 完全一樣 (shard 大小、雙峰 image 大小)，後續 pipeline 看不出差別。離線、無 GPU、CI 環境都能跑。`--synthetic` 明確指定，就算 `datasets` 沒裝也絕對不會 crash。
 
 ### 1c. 驗證
 
